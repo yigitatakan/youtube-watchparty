@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-900 text-gray-100 min-h-screen;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  :root {
+    --primary: 262, 83%, 64%;
+    --secondary: 175, 84%, 32%;
+    --accent: 328, 85%, 64%;
+    --success: 142, 71%, 45%;
+    --warning: 38, 92%, 50%;
+    --error: 0, 84%, 60%;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md transition-colors duration-200;
+  }
+  
+  .btn-secondary {
+    @apply bg-teal-700 hover:bg-teal-800 text-white px-4 py-2 rounded-md transition-colors duration-200;
+  }
+  
+  .btn-accent {
+    @apply bg-pink-600 hover:bg-pink-700 text-white px-4 py-2 rounded-md transition-colors duration-200;
+  }
+
+  .input-field {
+    @apply bg-gray-800 border border-gray-700 rounded-md px-4 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all duration-200;
+  }
+
+  .card {
+    @apply bg-gray-800 rounded-lg p-6 shadow-lg border border-gray-700;
+  }
+
+  .video-container {
+    @apply relative w-full overflow-hidden rounded-lg bg-black;
+    aspect-ratio: 16 / 9;
+  }
+  
+  .chat-container {
+    @apply bg-gray-800 rounded-lg border border-gray-700 flex flex-col;
+  }
+  
+  .chat-messages {
+    @apply flex-1 overflow-y-auto p-4 space-y-3;
+  }
+  
+  .chat-input {
+    @apply border-t border-gray-700 p-3;
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.pulse {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
+}
+
+.slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-900;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-700 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-600;
+}
