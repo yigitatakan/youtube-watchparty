@@ -6,8 +6,6 @@ import { SocketProvider } from './context/SocketContext';
 import { UserProvider } from './context/UserContext';
 import DebugPage from './pages/DebugPage';
 
-import './App.css';
-
 function App() {
   return (
     <UserProvider>
