@@ -56,7 +56,32 @@ export const useVideoSync = (roomId: string) => {
     setCurrentVideoId,
     setIsPlaying,
     setCurrentTime,
+    participants
   } = useRoomStore();
+
+  // Kendimizin gönderdiği olayları izlemek için timestamp takibi
+  const lastSentEvents = useRef<Record<string, number>>({
+    play: 0,
+    pause: 0,
+    seek: 0,
+    sync: 0,
+    force_sync: 0
+  });
+  
+  // Kendi gönderdiğimiz olayları kontrol et
+  const isOwnEvent = (eventType: string, timestamp: number): boolean => {
+    const lastTimestamp = lastSentEvents.current[eventType];
+    const diff = Math.abs(timestamp - lastTimestamp);
+    
+    // Eğer son 1 saniye içinde bu olayı kendimiz göndermişsek, 
+    // kendi olayımızı işlememek için true dön
+    return diff < 1000;
+  };
+  
+  // Zaman damgasını güncelle
+  const updateSentEventTimestamp = (eventType: string) => {
+    lastSentEvents.current[eventType] = Date.now();
+  };
 
   // Debug fonksiyonu
   const logDebug = useCallback((...args: any[]) => {
@@ -226,7 +251,13 @@ export const useVideoSync = (roomId: string) => {
     };
 
     // Video oynatma olayı
-    const handleVideoPlay = ({ time }: { time: number }) => {
+    const handleVideoPlay = ({ time, timestamp }: { time: number, timestamp?: number }) => {
+      // Kendi gönderdiğimiz olayı kontrol et
+      if (timestamp && isOwnEvent('play', timestamp)) {
+        logDebug('Kendi gönderdiğimiz play olayı, işlem atlanıyor');
+        return;
+      }
+      
       logDebug('Socket: video:play olayı alındı, time:', time);
       
       setIsPlaying(true);
@@ -252,7 +283,13 @@ export const useVideoSync = (roomId: string) => {
     };
 
     // Video duraklatma olayı
-    const handleVideoPause = ({ time }: { time: number }) => {
+    const handleVideoPause = ({ time, timestamp }: { time: number, timestamp?: number }) => {
+      // Kendi gönderdiğimiz olayı kontrol et
+      if (timestamp && isOwnEvent('pause', timestamp)) {
+        logDebug('Kendi gönderdiğimiz pause olayı, işlem atlanıyor');
+        return;
+      }
+      
       logDebug('Socket: video:pause olayı alındı, time:', time);
       
       setIsPlaying(false);
@@ -278,7 +315,13 @@ export const useVideoSync = (roomId: string) => {
     };
 
     // Video zaman değişikliği (seek) olayı
-    const handleVideoSeek = ({ time }: { time: number }) => {
+    const handleVideoSeek = ({ time, timestamp }: { time: number, timestamp?: number }) => {
+      // Kendi gönderdiğimiz olayı kontrol et
+      if (timestamp && isOwnEvent('seek', timestamp)) {
+        logDebug('Kendi gönderdiğimiz seek olayı, işlem atlanıyor');
+        return;
+      }
+      
       logDebug('Socket: video:seek olayı alındı, time:', time);
       
       setCurrentTime(time);
@@ -294,7 +337,13 @@ export const useVideoSync = (roomId: string) => {
     };
 
     // Video senkronizasyon olayı
-    const handleVideoSync = ({ time, isPlaying: newIsPlaying, videoId }: { time: number, isPlaying: boolean, videoId: string }) => {
+    const handleVideoSync = ({ time, isPlaying: newIsPlaying, videoId, timestamp }: { time: number, isPlaying: boolean, videoId: string, timestamp?: number }) => {
+      // Kendi gönderdiğimiz olayı kontrol et
+      if (timestamp && isOwnEvent('sync', timestamp)) {
+        logDebug('Kendi gönderdiğimiz sync olayı, işlem atlanıyor');
+        return;
+      }
+      
       logDebug('Socket: video:sync olayı alındı:', { time, isPlaying: newIsPlaying, videoId });
       
       // Senkronizasyon beklemesi varsa kaldır
@@ -342,7 +391,13 @@ export const useVideoSync = (roomId: string) => {
     };
 
     // Zorunlu senkronizasyon olayı
-    const handleForceSync = ({ time, isPlaying: newIsPlaying, videoId }: { time: number, isPlaying: boolean, videoId: string }) => {
+    const handleForceSync = ({ time, isPlaying: newIsPlaying, videoId, timestamp }: { time: number, isPlaying: boolean, videoId: string, timestamp?: number }) => {
+      // Kendi gönderdiğimiz olayı kontrol et (zorla senkronizasyon için çok sıkı kontrol etme)
+      if (timestamp && isOwnEvent('force_sync', timestamp) && Math.abs(Date.now() - timestamp) < 500) {
+        logDebug('Kendi gönderdiğimiz force_sync olayı, işlem atlanıyor');
+        return;
+      }
+      
       logDebug('Socket: video:force_sync olayı alındı:', { time, isPlaying: newIsPlaying, videoId });
       
       // Video değiştiyse
@@ -471,20 +526,26 @@ export const useVideoSync = (roomId: string) => {
     
     try {
       const currentPlayerTime = playerRef.current.getCurrentTime();
+      const timestamp = Date.now();
       
       socket.emit('video:force_sync', {
         roomId,
         time: currentPlayerTime,
         isPlaying,
         videoId: currentVideoId,
-        timestamp: Date.now()
+        timestamp
       });
       
-      setLastForceSyncTime(Date.now());
+      setLastForceSyncTime(timestamp);
       logDebug('Zorla senkronizasyon isteği gönderildi:', {
         time: currentPlayerTime,
         isPlaying
       });
+      
+      // Timestamp güncelleme fonksiyonu yoksa atla
+      if (typeof updateSentEventTimestamp === 'function') {
+        updateSentEventTimestamp('force_sync');
+      }
     } catch (e) {
       console.error('Zorla senkronizasyon hatası:', e);
     }
@@ -520,12 +581,31 @@ export const useVideoSync = (roomId: string) => {
     if (!socket || !isConnected || !isReady || !playerRef.current) return;
     
     // Yeni kullanıcı katıldığında
-    const handleUserJoined = () => {
+    const handleUserJoined = (data: { participant: { userId: string, displayName: string } }) => {
       try {
-        // Kısa bir gecikme ile durum yayını yap
-        setTimeout(() => {
-          broadcastState();
-        }, 1000);
+        // Sadece host ise veya en az 2 saniye önce bir kez bildirim yapmadıysa
+        const isHost = participants.find(p => p.userId === data.participant.userId)?.isHost;
+        
+        // Son senkronizasyon zamanını kontrol et
+        const now = Date.now();
+        const lastSyncDiff = now - lastForceSyncTime;
+        
+        // Eğer host ise veya son 5 saniyede senkronizasyon yapılmadıysa ve kullanıcı sayısı 2 veya daha azsa
+        if ((isHost || lastSyncDiff > 5000) && participants.length <= 2) {
+          // Kısa bir gecikme ile durum yayını yap
+          setTimeout(() => {
+            // Sunucudan son durumu tekrar iste
+            socket.emit('video:get_current', { roomId, timestamp: now });
+            logDebug('Yeni kullanıcı için durum istendi');
+            
+            // Sadece host ise zorla senkronizasyon yap
+            if (isHost) {
+              setTimeout(() => {
+                forceSyncAll();
+              }, 2000);
+            }
+          }, 1000);
+        }
       } catch (e) {
         console.error('Yeni kullanıcı için durum yayını hatası:', e);
       }
@@ -538,7 +618,7 @@ export const useVideoSync = (roomId: string) => {
     return () => {
       socket.off('room:user-joined', handleUserJoined);
     };
-  }, [socket, isConnected, isReady, broadcastState]);
+  }, [socket, isConnected, isReady, broadcastState, participants, forceSyncAll, roomId, lastForceSyncTime, logDebug]);
 
   // Playeri ayarla
   const setPlayerRef = useCallback((player: VideoPlayerInterface) => {
@@ -578,11 +658,18 @@ export const useVideoSync = (roomId: string) => {
     logDebug('Video oynatma isteği');
     
     if (socket && isConnected) {
+      const timestamp = Date.now();
+      
       socket.emit('video:play', { 
         roomId, 
         time: currentTime, 
-        timestamp: Date.now() 
+        timestamp
       });
+      
+      // Timestamp güncelleme fonksiyonu yoksa atla
+      if (typeof updateSentEventTimestamp === 'function') {
+        updateSentEventTimestamp('play');
+      }
     }
     
     setIsPlaying(true);
@@ -597,11 +684,19 @@ export const useVideoSync = (roomId: string) => {
     logDebug('Video duraklatma isteği');
     
     if (socket && isConnected) {
+      const timestamp = Date.now();
+      const currentPlayerTime = playerRef.current?.getCurrentTime() || currentTime;
+      
       socket.emit('video:pause', { 
         roomId, 
-        time: playerRef.current?.getCurrentTime() || currentTime, 
-        timestamp: Date.now() 
+        time: currentPlayerTime, 
+        timestamp
       });
+      
+      // Timestamp güncelleme fonksiyonu yoksa atla
+      if (typeof updateSentEventTimestamp === 'function') {
+        updateSentEventTimestamp('pause');
+      }
     }
     
     setIsPlaying(false);
@@ -616,11 +711,18 @@ export const useVideoSync = (roomId: string) => {
     logDebug('Video ileri/geri sarma isteği:', seconds);
     
     if (socket && isConnected) {
+      const timestamp = Date.now();
+      
       socket.emit('video:seek', { 
         roomId, 
         time: seconds, 
-        timestamp: Date.now() 
+        timestamp
       });
+      
+      // Timestamp güncelleme fonksiyonu yoksa atla
+      if (typeof updateSentEventTimestamp === 'function') {
+        updateSentEventTimestamp('seek');
+      }
     }
     
     setCurrentTime(seconds);
@@ -651,11 +753,18 @@ export const useVideoSync = (roomId: string) => {
           
           // Oynatma durumunu diğer kullanıcılara bildir
           if (socket && isConnected && !syncPending.current) {
+            const timestamp = Date.now();
+            
             socket.emit('video:play', {
               roomId,
               time: playerRef.current.getCurrentTime(),
-              timestamp: Date.now()
+              timestamp
             });
+            
+            // Timestamp güncelleme fonksiyonu yoksa atla
+            if (typeof updateSentEventTimestamp === 'function') {
+              updateSentEventTimestamp('play');
+            }
           }
         }
         
@@ -668,11 +777,18 @@ export const useVideoSync = (roomId: string) => {
           
           // Duraklatma durumunu diğer kullanıcılara bildir
           if (socket && isConnected && !syncPending.current) {
+            const timestamp = Date.now();
+            
             socket.emit('video:pause', {
               roomId,
               time: playerRef.current.getCurrentTime(),
-              timestamp: Date.now()
+              timestamp
             });
+            
+            // Timestamp güncelleme fonksiyonu yoksa atla
+            if (typeof updateSentEventTimestamp === 'function') {
+              updateSentEventTimestamp('pause');
+            }
           }
         }
         
@@ -689,11 +805,18 @@ export const useVideoSync = (roomId: string) => {
         
         // Video bittiğinde diğer kullanıcılara bildir
         if (socket && isConnected) {
+          const timestamp = Date.now();
+          
           socket.emit('video:pause', {
             roomId,
             time: playerRef.current.getCurrentTime(),
-            timestamp: Date.now()
+            timestamp
           });
+          
+          // Timestamp güncelleme fonksiyonu yoksa atla
+          if (typeof updateSentEventTimestamp === 'function') {
+            updateSentEventTimestamp('pause');
+          }
         }
       }
     } catch (e) {

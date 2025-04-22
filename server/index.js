@@ -106,54 +106,54 @@ io.on('connection', (socket) => {
   
   // Video kontrolleri
   socket.on('video:play', (data) => {
-    const { roomId, time } = data;
+    const { roomId, time, timestamp } = data;
     
     if (rooms[roomId]) {
       rooms[roomId].isPlaying = true;
       rooms[roomId].currentTime = time;
       rooms[roomId].lastUpdated = Date.now();
       
-      // Tüm odaya yayın yap (kendisi dahil)
-      io.to(roomId).emit('video:play', data);
+      // Tüm odaya yayın yap (kendisi dahil) - timestamp'i koru
+      io.to(roomId).emit('video:play', { ...data });
     } else {
       // Sadece diğerlerine gönder
-      socket.to(currentRoom).emit('video:play', data);
+      socket.to(currentRoom).emit('video:play', { ...data });
     }
   });
   
   socket.on('video:pause', (data) => {
-    const { roomId, time } = data;
+    const { roomId, time, timestamp } = data;
     
     if (rooms[roomId]) {
       rooms[roomId].isPlaying = false;
       rooms[roomId].currentTime = time;
       rooms[roomId].lastUpdated = Date.now();
       
-      // Tüm odaya yayın yap (kendisi dahil)
-      io.to(roomId).emit('video:pause', data);
+      // Tüm odaya yayın yap (kendisi dahil) - timestamp'i koru
+      io.to(roomId).emit('video:pause', { ...data });
     } else {
       // Sadece diğerlerine gönder
-      socket.to(currentRoom).emit('video:pause', data);
+      socket.to(currentRoom).emit('video:pause', { ...data });
     }
   });
   
   socket.on('video:seek', (data) => {
-    const { roomId, time } = data;
+    const { roomId, time, timestamp } = data;
     
     if (rooms[roomId]) {
       rooms[roomId].currentTime = time;
       rooms[roomId].lastUpdated = Date.now();
       
-      // Tüm odaya yayın yap (kendisi dahil)
-      io.to(roomId).emit('video:seek', data);
+      // Tüm odaya yayın yap (kendisi dahil) - timestamp'i koru
+      io.to(roomId).emit('video:seek', { ...data });
     } else {
       // Sadece diğerlerine gönder
-      socket.to(currentRoom).emit('video:seek', data);
+      socket.to(currentRoom).emit('video:seek', { ...data });
     }
   });
   
   socket.on('video:sync', (data) => {
-    const { roomId, time, isPlaying, videoId } = data;
+    const { roomId, time, isPlaying, videoId, timestamp } = data;
     
     if (rooms[roomId]) {
       if (videoId) {
@@ -164,17 +164,17 @@ io.on('connection', (socket) => {
       rooms[roomId].isPlaying = isPlaying;
       rooms[roomId].lastUpdated = Date.now();
       
-      // Tüm odaya yayın yap (kendisi dahil)
-      io.to(roomId).emit('video:sync', data);
+      // Tüm odaya yayın yap (kendisi dahil) - timestamp'i koru
+      io.to(roomId).emit('video:sync', { ...data });
     } else {
       // Sadece diğerlerine gönder
-      socket.to(currentRoom).emit('video:sync', data);
+      socket.to(currentRoom).emit('video:sync', { ...data });
     }
   });
   
   // Force Sync özelliği ekle - odadakileri zorla senkronize et
   socket.on('video:force_sync', (data) => {
-    const { roomId } = data;
+    const { roomId, timestamp } = data;
     
     if (rooms[roomId]) {
       // Zorla senkronizasyon istendi, odanın durumunu güncelle
@@ -183,12 +183,8 @@ io.on('connection', (socket) => {
       if (data.videoId !== undefined) rooms[roomId].currentVideoId = data.videoId;
       rooms[roomId].lastUpdated = Date.now();
       
-      // Tüm odaya yayın yap
-      io.to(roomId).emit('video:force_sync', {
-        time: rooms[roomId].currentTime,
-        isPlaying: rooms[roomId].isPlaying,
-        videoId: rooms[roomId].currentVideoId
-      });
+      // Tüm odaya yayın yap - timestamp'i koru
+      io.to(roomId).emit('video:force_sync', { ...data });
     }
   });
   
