@@ -397,43 +397,37 @@ export const useVideoSync = (roomId: string) => {
   useEffect(() => {
     if (!socket || !isConnected || !isReady) return;
     
-    // Periyodik olarak durum gönderme
-    const broadcastState = () => {
-      if (!playerRef.current || !isReady || seeking.current) return;
-      
-      try {
-        const now = Date.now();
-        if (now - lastUpdateTime > SYNC_CONFIG.SYNC_INTERVAL) {
-          socket.emit('video:sync', {
-            roomId,
-            time: playerRef.current.getCurrentTime(),
-            isPlaying,
-            videoId: currentVideoId,
-            timestamp: now
-          });
+    // Senkronizasyon aralığında state yayını yap
+    syncIntervalRef.current = setInterval(() => {
+      // Eğer player hazır ve video oynatılıyor veya duraklatılmışsa
+      if (playerRef.current && !seeking.current) {
+        try {
+          const currentPlayerTime = playerRef.current.getCurrentTime();
           
-          setLastUpdateTime(now);
+          // Eğer zaman bilgisi geçerliyse ve daha önceki zamandan farklıysa
+          if (!isNaN(currentPlayerTime) && Math.abs(currentPlayerTime - lastUpdateTime) > 1) {
+            setCurrentTime(currentPlayerTime);
+            setLastUpdateTime(currentPlayerTime);
+            
+            // Senkronizasyon bilgisini socket üzerinden gönder
+            socket.emit('video:sync', {
+              roomId,
+              time: currentPlayerTime,
+              isPlaying,
+              videoId: currentVideoId,
+              timestamp: Date.now()
+            });
+            
+            logDebug('Periyodik senkronizasyon bilgisi gönderildi:', {
+              time: currentPlayerTime,
+              isPlaying
+            });
+          }
+        } catch (e) {
+          console.error('Periyodik senkronizasyon hatası:', e);
         }
-        
-        // Zorunlu senkronizasyon
-        if (now - lastForceSyncTime > SYNC_CONFIG.FORCE_SYNC_INTERVAL) {
-          socket.emit('video:force_sync', {
-            roomId,
-            time: playerRef.current.getCurrentTime(),
-            isPlaying,
-            videoId: currentVideoId,
-            timestamp: now
-          });
-          
-          setLastForceSyncTime(now);
-        }
-      } catch (error) {
-        console.error('Senkronizasyon durumu gönderme hatası:', error);
       }
-    };
-    
-    // Zamanlayıcı başlat
-    syncIntervalRef.current = setInterval(broadcastState, 1000);
+    }, SYNC_CONFIG.SYNC_INTERVAL);
     
     return () => {
       if (syncIntervalRef.current) {
@@ -441,7 +435,110 @@ export const useVideoSync = (roomId: string) => {
         syncIntervalRef.current = null;
       }
     };
-  }, [socket, isConnected, roomId, isReady, currentVideoId, isPlaying, lastUpdateTime, lastForceSyncTime, setLastUpdateTime, setLastForceSyncTime, logDebug]);
+  }, [socket, isConnected, isReady, roomId, currentVideoId, isPlaying, lastUpdateTime, logDebug]);
+
+  // Oynatma durumu değişikliklerinde bildirim gönder
+  useEffect(() => {
+    if (!socket || !isConnected || !isReady || !playerRef.current || seeking.current) return;
+    
+    try {
+      // Oynatma/duraklatma durumu değiştiğinde
+      if (isPlaying) {
+        socket.emit('video:play', {
+          roomId,
+          time: currentTime,
+          timestamp: Date.now()
+        });
+        
+        logDebug('Video oynatma bilgisi gönderildi:', currentTime);
+      } else {
+        socket.emit('video:pause', {
+          roomId,
+          time: currentTime,
+          timestamp: Date.now()
+        });
+        
+        logDebug('Video duraklatma bilgisi gönderildi:', currentTime);
+      }
+    } catch (e) {
+      console.error('Oynatma durumu değişikliği bildirme hatası:', e);
+    }
+  }, [socket, isConnected, isReady, isPlaying, currentTime, roomId, logDebug]);
+  
+  // Tüm izleyicileri zorla senkronize et - odadaki herkesin videoyu belirli bir noktada ve durumda izlemesini sağlar
+  const forceSyncAll = useCallback(() => {
+    if (!socket || !isConnected || !playerRef.current || !isReady) return;
+    
+    try {
+      const currentPlayerTime = playerRef.current.getCurrentTime();
+      
+      socket.emit('video:force_sync', {
+        roomId,
+        time: currentPlayerTime,
+        isPlaying,
+        videoId: currentVideoId,
+        timestamp: Date.now()
+      });
+      
+      setLastForceSyncTime(Date.now());
+      logDebug('Zorla senkronizasyon isteği gönderildi:', {
+        time: currentPlayerTime,
+        isPlaying
+      });
+    } catch (e) {
+      console.error('Zorla senkronizasyon hatası:', e);
+    }
+  }, [socket, isConnected, isReady, roomId, currentVideoId, isPlaying, logDebug]);
+
+  // Şimdiki durumu yayınla - herhangi bir kullanıcının mevcut durumu sunucuya göndermesini sağlar
+  const broadcastState = useCallback(() => {
+    if (!socket || !isConnected || !playerRef.current || !isReady) return;
+    
+    try {
+      const currentPlayerTime = playerRef.current.getCurrentTime();
+      
+      // Sunucuya mevcut durumu bildir
+      socket.emit('video:sync', {
+        roomId,
+        time: currentPlayerTime,
+        isPlaying,
+        videoId: currentVideoId,
+        timestamp: Date.now()
+      });
+      
+      logDebug('Durum yayını gönderildi:', {
+        time: currentPlayerTime,
+        isPlaying
+      });
+    } catch (e) {
+      console.error('Durum yayını hatası:', e);
+    }
+  }, [socket, isConnected, isReady, roomId, currentVideoId, isPlaying, logDebug]);
+  
+  // Yeni kullanıcılar katıldığında durum yayını yap
+  useEffect(() => {
+    if (!socket || !isConnected || !isReady || !playerRef.current) return;
+    
+    // Yeni kullanıcı katıldığında
+    const handleUserJoined = () => {
+      try {
+        // Kısa bir gecikme ile durum yayını yap
+        setTimeout(() => {
+          broadcastState();
+        }, 1000);
+      } catch (e) {
+        console.error('Yeni kullanıcı için durum yayını hatası:', e);
+      }
+    };
+    
+    // Olay dinleyicisini ekle
+    socket.on('room:user-joined', handleUserJoined);
+    
+    // Temizleme
+    return () => {
+      socket.off('room:user-joined', handleUserJoined);
+    };
+  }, [socket, isConnected, isReady, broadcastState]);
 
   // Playeri ayarla
   const setPlayerRef = useCallback((player: VideoPlayerInterface) => {
@@ -540,87 +637,85 @@ export const useVideoSync = (roomId: string) => {
 
   // Durum değişikliği olayını işle
   const handleStateChange = useCallback((event: any) => {
-    if (!playerRef.current || seeking.current) return;
+    if (!playerRef.current || seeking.current || !isReady) return;
     
-    const state = event.data;
+    // YT.PlayerState değerleri
+    // -1 (unstarted), 0 (ended), 1 (playing), 2 (paused), 3 (buffering), 5 (video cued)
+    const playerState = event.data;
     
-    // Buffer durumunu güncelle
-    setIsBuffering(state === PLAYER_STATE.BUFFERING);
-    
-    // Durumuna göre işlem yap
-    if (state === PLAYER_STATE.PLAYING && !isPlaying) {
-      setIsPlaying(true);
-      
-      if (socket && isConnected) {
-        socket.emit('video:play', { 
-          roomId, 
-          time: playerRef.current.getCurrentTime() || currentTime, 
-          timestamp: Date.now() 
-        });
+    try {
+      // Oynatılıyor
+      if (playerState === 1) {
+        if (!isPlaying) {
+          setIsPlaying(true);
+          
+          // Oynatma durumunu diğer kullanıcılara bildir
+          if (socket && isConnected && !syncPending.current) {
+            socket.emit('video:play', {
+              roomId,
+              time: playerRef.current.getCurrentTime(),
+              timestamp: Date.now()
+            });
+          }
+        }
+        
+        setIsBuffering(false);
       }
-    }
-    else if (state === PLAYER_STATE.PAUSED && isPlaying) {
-      setIsPlaying(false);
-      
-      if (socket && isConnected) {
-        socket.emit('video:pause', { 
-          roomId, 
-          time: playerRef.current.getCurrentTime() || currentTime, 
-          timestamp: Date.now() 
-        });
+      // Duraklatıldı
+      else if (playerState === 2) {
+        if (isPlaying) {
+          setIsPlaying(false);
+          
+          // Duraklatma durumunu diğer kullanıcılara bildir
+          if (socket && isConnected && !syncPending.current) {
+            socket.emit('video:pause', {
+              roomId,
+              time: playerRef.current.getCurrentTime(),
+              timestamp: Date.now()
+            });
+          }
+        }
+        
+        setIsBuffering(false);
       }
-    }
-    else if (state === PLAYER_STATE.ENDED) {
-      setIsPlaying(false);
-      
-      if (socket && isConnected) {
-        socket.emit('video:pause', { 
-          roomId, 
-          time: playerRef.current.getCurrentTime() || currentTime, 
-          timestamp: Date.now() 
-        });
+      // Buffering
+      else if (playerState === 3) {
+        setIsBuffering(true);
       }
+      // Bitti
+      else if (playerState === 0) {
+        setIsPlaying(false);
+        setIsBuffering(false);
+        
+        // Video bittiğinde diğer kullanıcılara bildir
+        if (socket && isConnected) {
+          socket.emit('video:pause', {
+            roomId,
+            time: playerRef.current.getCurrentTime(),
+            timestamp: Date.now()
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Player durum değişikliği hatası:', e);
     }
-  }, [socket, isConnected, roomId, isPlaying, currentTime, setIsPlaying, logDebug]);
+  }, [socket, isConnected, isReady, isPlaying, roomId, setIsPlaying]);
 
   // Manuel senkronizasyon
   const synchronizeNow = useCallback(() => {
-    logDebug('Manuel senkronizasyon başlatıldı');
-    
-    if (!playerRef.current || !isReady) {
-      logDebug('Player hazır değil, senkronizasyon yapılamıyor');
-      return;
-    }
-    
-    try {
-      const playerTime = playerRef.current.getCurrentTime();
-      
-      // Diğer katılımcıları senkronize et
-      if (socket && isConnected) {
-        socket.emit('video:force_sync', {
-          roomId,
-          time: playerTime,
-          isPlaying,
-          videoId: currentVideoId,
-          timestamp: Date.now()
-        });
-        
-        logDebug('Zorunlu senkronizasyon gönderildi');
-      }
-    } catch (error) {
-      console.error('Manuel senkronizasyon hatası:', error);
-    }
-  }, [socket, isConnected, roomId, currentVideoId, isReady, isPlaying, logDebug]);
+    forceSyncAll();
+  }, [forceSyncAll]);
 
   return {
     isReady,
     isBuffering,
     setPlayerRef,
     loadVideo,
+    handleStateChange,
     playVideo,
     pauseVideo,
     seekTo,
     synchronizeNow,
-    handleStateChange
+    broadcastState
   };
 };

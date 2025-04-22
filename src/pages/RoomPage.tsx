@@ -9,7 +9,7 @@ import ChatPanel from '../components/ChatPanel';
 import ParticipantsList from '../components/ParticipantsList';
 import VideoControls from '../components/VideoControls';
 import SearchVideo from '../components/SearchVideo';
-import { ArrowLeft, Users, Menu } from 'lucide-react';
+import { ArrowLeft, Users, Menu, RefreshCw } from 'lucide-react';
 
 const RoomPage: React.FC = () => {
   const { roomId = '' } = useParams<{ roomId: string }>();
@@ -31,6 +31,8 @@ const RoomPage: React.FC = () => {
     addParticipant,
     removeParticipant,
     setCurrentVideoId,
+    setCurrentTime,
+    setIsPlaying,
     clearRoom,
   } = useRoomStore();
 
@@ -94,6 +96,15 @@ const RoomPage: React.FC = () => {
       console.log("Mevcut video bilgisi alındı:", data);
       if (data.videoId) {
         setCurrentVideoId(data.videoId);
+
+        // Eğer mevcut oynatma durumu ve zamanı da geldiyse kullan
+        if (data.isPlaying !== undefined) {
+          setIsPlaying(data.isPlaying);
+        }
+
+        if (data.time !== undefined) {
+          setCurrentTime(data.time);
+        }
       }
     });
 
@@ -105,7 +116,7 @@ const RoomPage: React.FC = () => {
       socket.off('room:user-left');
       socket.off('video:current');
     };
-  }, [socket, isConnected, roomId, userId, displayName, addParticipant, removeParticipant, setParticipants, setCurrentVideoId]);
+  }, [socket, isConnected, roomId, userId, displayName, addParticipant, removeParticipant, setParticipants, setCurrentVideoId, setCurrentTime, setIsPlaying]);
 
   // Load current video when it changes
   useEffect(() => {
@@ -187,6 +198,13 @@ const RoomPage: React.FC = () => {
           </div>
 
           <div className="flex items-center">
+            <button
+              onClick={() => synchronizeNow()}
+              className="p-2 rounded-full hover:bg-gray-700 transition-colors mr-2"
+              title="Videoyu herkesle senkronize et"
+            >
+              <RefreshCw className="h-5 w-5" />
+            </button>
             <button
               onClick={() => setShowParticipants(!showParticipants)}
               className="p-2 rounded-full hover:bg-gray-700 transition-colors flex items-center mr-2"
