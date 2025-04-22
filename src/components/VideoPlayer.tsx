@@ -48,7 +48,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const playerContainer = document.getElementById('player-container');
     if (playerContainer) {
       // İframe URL oluştur - mevcut player parametrelerini kullan
-      let embedUrl = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&autoplay=1&mute=1&modestbranding=1&rel=0&playsinline=1&start=${Math.floor(currentTime)}`;
+      // enablejsapi=1 YouTube API'nin iframe içinden erişilebilirliğini sağlar
+      let embedUrl = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&autoplay=1&mute=1&modestbranding=1&rel=0&playsinline=1&start=${Math.floor(currentTime)}&origin=${encodeURIComponent(window.location.origin)}`;
 
       // İframe elementini oluştur
       playerContainer.innerHTML = `
@@ -71,17 +72,45 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const simplePlayer: VideoPlayerInterface = {
         playVideo: () => {
           if (iframeRef.current) {
-            iframeRef.current.contentWindow?.postMessage('{"event":"command","func":"playVideo","args":""}', '*');
+            try {
+              // YouTube iframe API formatına uygun komut gönder
+              iframeRef.current.contentWindow?.postMessage(JSON.stringify({
+                event: "command",
+                func: "playVideo",
+                args: []
+              }), "*");
+              console.log("Play komutu gönderildi");
+            } catch (e) {
+              console.error("Play komutu gönderilemedi:", e);
+            }
           }
         },
         pauseVideo: () => {
           if (iframeRef.current) {
-            iframeRef.current.contentWindow?.postMessage('{"event":"command","func":"pauseVideo","args":""}', '*');
+            try {
+              iframeRef.current.contentWindow?.postMessage(JSON.stringify({
+                event: "command",
+                func: "pauseVideo",
+                args: []
+              }), "*");
+              console.log("Pause komutu gönderildi");
+            } catch (e) {
+              console.error("Pause komutu gönderilemedi:", e);
+            }
           }
         },
         seekTo: (seconds: number) => {
           if (iframeRef.current) {
-            iframeRef.current.contentWindow?.postMessage(`{"event":"command","func":"seekTo","args":[${seconds}, true]}`, '*');
+            try {
+              iframeRef.current.contentWindow?.postMessage(JSON.stringify({
+                event: "command",
+                func: "seekTo",
+                args: [seconds, true]
+              }), "*");
+              console.log(`Seek komutu gönderildi: ${seconds}`);
+            } catch (e) {
+              console.error("Seek komutu gönderilemedi:", e);
+            }
           }
         },
         getCurrentTime: () => {
@@ -106,6 +135,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }
 
         console.log('Basit iframe player hazır');
+
+        // İframe hazır sinyali gönder
+        if (iframeRef.current?.contentWindow) {
+          try {
+            iframeRef.current.contentWindow.postMessage(JSON.stringify({
+              event: "listening",
+              id: videoId
+            }), "*");
+          } catch (e) {
+            console.error("Listening komutu gönderilemedi:", e);
+          }
+        }
+
       }, 1500); // iFrame yüklenmesine zaman tanı
     }
 
@@ -120,8 +162,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     // YouTube'dan gelen mesajları kontrol et
     if (event.origin !== "https://www.youtube.com") return;
 
+    // Debug için mesajı göster
+    console.log("YouTube'dan mesaj alındı:", event.data);
+
     try {
-      const data = JSON.parse(event.data);
+      // Mesaj bir string olabilir (eski API) veya JSON olabilir (yeni API)
+      let data;
+      if (typeof event.data === 'string') {
+        data = JSON.parse(event.data);
+      } else {
+        data = event.data;
+      }
 
       // YouTube'un olay bilgilerini kontrol et
       if (data.event === "onReady") {
@@ -131,6 +182,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       else if (data.event === "onStateChange") {
         // Durum değişikliklerini işle
         const state = data.info;
+        console.log('YouTube iframe API: Durum değişti', state);
 
         // Durum değişikliği olayını bildir
         onStateChange({ data: state });
@@ -144,7 +196,15 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
       else if (data.event === "onError") {
         const errorCode = data.info;
+        console.error('YouTube iframe API: Hata', errorCode);
         handleError(errorCode);
+      }
+      else if (data.event === "infoDelivery") {
+        console.log('YouTube iframe API: Bilgi', data.info);
+        // Video süresi bilgisi buradan da gelebilir
+        if (data.info && data.info.duration && window.updateVideoDuration) {
+          window.updateVideoDuration(data.info.duration);
+        }
       }
     } catch (e) {
       // JSON.parse hatası veya diğer hatalar

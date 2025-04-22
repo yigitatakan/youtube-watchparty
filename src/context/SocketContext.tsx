@@ -48,6 +48,7 @@ class MockSocketServer {
   private channel: BroadcastChannel | null = null;
   private userId: string;
   private displayName: string;
+  private debugMode = true; // Hata ayıklama için
   private mockSocket: any = {
     on: (event: string, handler: (data: any) => void) => {
       if (!this.eventHandlers[event]) {
@@ -57,10 +58,42 @@ class MockSocketServer {
       return this.mockSocket;
     },
     emit: (event: string, data: any) => {
+      // Debug log
+      if (this.debugMode) {
+        console.log(`[MockSocket] ${event} olayı gönderiliyor:`, data);
+      }
+
       // Broadcast kanalı üzerinden diğer sekmelere gönder
       if (this.channel) {
         try {
-          this.channel.postMessage({ event, data, sender: this.userId });
+          // Video olayları için özellikle içeriği zenginleştir
+          if (event.startsWith('video:')) {
+            // Videoyla ilgili olaylar için mevcut zaman bilgisini kaydet
+            if (event === 'video:play' || event === 'video:pause' || event === 'video:seek' || event === 'video:sync' || event === 'video:force_sync') {
+              if (!data.timestamp) {
+                data.timestamp = Date.now();
+              }
+
+              // Odadaki herkese anında yanıt ver
+              this.broadcastToRoom(event, data);
+            }
+
+            // Video yükleme için özel işlem
+            if (event === 'video:load') {
+              safeStorage.setItem(`video_${data.roomId}`, data.videoId);
+
+              // Odadaki herkese anında yanıt ver
+              this.broadcastToRoom(event, data);
+            }
+          }
+
+          // Tüm mesajları BroadcastChannel üzerinden gönder
+          this.channel.postMessage({
+            event,
+            data,
+            sender: this.userId,
+            timestamp: Date.now()
+          });
         } catch (error) {
           console.warn('BroadcastChannel gönderme hatası:', error);
         }
@@ -86,11 +119,6 @@ class MockSocketServer {
         }
       }
 
-      // Video yüklendiğinde güvenli depoya kaydet
-      if (event === 'video:load') {
-        safeStorage.setItem(`video_${data.roomId}`, data.videoId);
-      }
-
       return this.mockSocket;
     },
     off: (event: string) => {
@@ -99,6 +127,9 @@ class MockSocketServer {
     },
     executeHandlers: (event: string, data: any) => {
       if (this.eventHandlers[event]) {
+        if (this.debugMode) {
+          console.log(`[MockSocket] Olay işleniyor: ${event}`, data);
+        }
         this.eventHandlers[event].forEach(handler => handler(data));
       }
     },
@@ -113,6 +144,18 @@ class MockSocketServer {
     }
   };
 
+  // Oda tabanlı yayın fonksiyonu - aynı odadaki diğer kullanıcılara mesaj gönderir
+  private broadcastToRoom(event: string, data: any) {
+    if (this.debugMode) {
+      console.log(`[MockSocket] Odaya yayın: ${event}`, data);
+    }
+
+    // Bu olay için odadaki tüm dinleyicileri tetikle
+    setTimeout(() => {
+      this.mockSocket.executeHandlers(event, data);
+    }, 10);
+  }
+
   constructor(userId: string, displayName: string) {
     this.userId = userId;
     this.displayName = displayName;
@@ -126,11 +169,13 @@ class MockSocketServer {
 
       // Diğer sekmelerin mesajlarını dinle
       this.channel.addEventListener('message', (event) => {
-        const { event: eventName, data, sender } = event.data;
+        const { event: eventName, data, sender, timestamp } = event.data;
 
         // Kendi gönderdiğimiz mesajları işleme - sadece diğer sekmelerden gelenleri işle
         if (sender !== this.userId && this.eventHandlers[eventName]) {
-          console.log(`Mock Socket: ${eventName} olayı alındı:`, data);
+          if (this.debugMode) {
+            console.log(`[MockSocket] ${eventName} olayı alındı (${Date.now() - timestamp}ms gecikme):`, data);
+          }
           this.mockSocket.executeHandlers(eventName, data);
         }
       });
@@ -161,7 +206,8 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
   const { userId, displayName } = useUser();
   const [usingMockSocket, setUsingMockSocket] = useState(false);
   const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 5;
+  const maxReconnectAttempts = 3; // 5'ten 3'e düşürdüm, daha hızlı yedek mod geçişi için
+  const forceMockSocket = true; // TEST: Her zaman BroadcastChannel kullan
 
   useEffect(() => {
     if (!userId || !displayName) return;
@@ -170,6 +216,13 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     setConnectionError(null);
     reconnectAttemptsRef.current = 0;
 
+    // TEST: Doğrudan mock socket kullanmak için
+    if (forceMockSocket) {
+      console.log('TEST MODU: BroadcastChannel kullanılıyor (zorunlu)');
+      setupMockSocket(userId, displayName, setSocket, setIsConnected, setUsingMockSocket);
+      return;
+    }
+
     // Gerçek socket.io kullan
     console.log('Gerçek socket.io sunucusuna bağlanılıyor:', API_URL);
     const socketIo = io(API_URL, {
@@ -177,7 +230,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       reconnection: true,
       reconnectionAttempts: maxReconnectAttempts,
       reconnectionDelay: 1000,
-      timeout: 10000,
+      timeout: 5000, // Daha hızlı bağlantı timeout'u
       query: {
         userId,
         displayName
@@ -236,7 +289,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
 
   // MockSocket kurulum fonksiyonu
   const setupMockSocket = (userId: string, displayName: string, setSocket: any, setIsConnected: any, setUsingMockSocket: any) => {
-    console.log('Mock socket kullanılıyor - Backend bağlantısı kurulamadı');
+    console.log('Mock socket kullanılıyor - BroadcastChannel aracılığıyla sekmeler arası senkronizasyon aktif');
     setUsingMockSocket(true);
 
     const mockSocketServer = new MockSocketServer(userId, displayName);
@@ -261,7 +314,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
 
   return (
     <SocketContext.Provider value={{ socket, isConnected }}>
-      {connectionError && (
+      {connectionError && !usingMockSocket && (
         <div className="bg-red-600 text-white p-2 text-center text-sm">
           <p><strong>Bağlantı Hatası:</strong> {connectionError}</p>
           <p className="text-xs">Tekrar bağlanılmaya çalışılıyor... ({reconnectAttemptsRef.current}/{maxReconnectAttempts})</p>
@@ -269,7 +322,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       )}
       {usingMockSocket && (
         <div className="bg-yellow-600 text-white p-2 text-center text-sm">
-          <p><strong>Uyarı:</strong> Mock socket kullanılıyor. Sadece aynı tarayıcıdaki sekmeler arasında senkronizasyon çalışacak.</p>
+          <p><strong>Yerel Mod Aktif:</strong> BroadcastChannel kullanılıyor - Senkronizasyon yalnızca aynı tarayıcıdaki sekmeler arasında çalışacak.</p>
         </div>
       )}
       {children}
