@@ -19,7 +19,7 @@ interface SocketProviderProps {
 }
 
 // API URL'i - environment değişkeni veya varsayılan değer
-const API_URL = import.meta.env.VITE_SOCKET_API_URL || 'http://localhost:3001';
+const API_URL = import.meta.env.VITE_SOCKET_API_URL || 'https://youtube-watchparty.onrender.com';
 
 // Safe localStorage access from UserContext
 const memoryStorage: Record<string, string> = {};

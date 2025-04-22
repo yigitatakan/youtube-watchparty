@@ -8,7 +8,7 @@ app.use(cors());
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: ['https://your-vercel-app-url.vercel.app', 'http://localhost:5173'],
+    origin: ['https://youtube-watchparty.vercel.app', 'http://localhost:5173'],
     methods: ['GET', 'POST'],
   },
 });
