@@ -2,28 +2,25 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRoomStore } from '../stores/roomStore';
 import { useSocket } from '../context/SocketContext';
 
-// YouTube API için tip tanımları
+// Video player interface'ı için basit bir tip tanımı
+interface VideoPlayerInterface {
+  playVideo: () => void;
+  pauseVideo: () => void;
+  seekTo: (seconds: number) => void;
+  getCurrentTime: () => number;
+  getDuration: () => number;
+}
+
+// YouTube postMessage API için tip tanımlamaları
 declare global {
   interface Window {
-    YT: {
-      Player: any;
-      PlayerState?: {
-        UNSTARTED: number;
-        ENDED: number;
-        PLAYING: number;
-        PAUSED: number;
-        BUFFERING: number;
-        CUED: number;
-      };
-    };
-    onYouTubeIframeAPIReady?: () => void;
     updateVideoDuration?: (duration: number) => void;
   }
 }
 
 interface VideoPlayerProps {
   videoId: string | null;
-  onReady: (player: any) => void;
+  onReady: (player: VideoPlayerInterface) => void;
   onStateChange: (event: any) => void;
 }
 
@@ -36,157 +33,127 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [error, setError] = useState<string | null>(null);
   const { isPlaying, currentTime } = useRoomStore();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const playerRef = useRef<any>(null);
+  const playerReadyRef = useRef<boolean>(false);
   const { isConnected } = useSocket();
 
-  // YouTube Player API'sini yükleme
+  // Direkt iframe ile basit bir video player oluştur
   useEffect(() => {
-    // YouTube IFrame Player API'yi yükle
-    if (!window.YT) {
-      const tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      const firstScriptTag = document.getElementsByTagName('script')[0];
-      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    if (!videoId) return;
 
-      // API hazır olduğunda player'ı başlat
-      window.onYouTubeIframeAPIReady = initializePlayer;
-    } else if (window.YT && window.YT.Player) {
-      // API zaten yüklüyse player'ı hemen başlat
-      initializePlayer();
-    }
-
-    return () => {
-      // Temizleme işlemleri
-      if (playerRef.current) {
-        try {
-          playerRef.current.destroy();
-        } catch (e) {
-          console.error('Player destroy hatası:', e);
-        }
-      }
-    };
-  }, []);
-
-  // Player'ı başlatma fonksiyonu
-  const initializePlayer = () => {
-    if (!videoId || !iframeRef.current) return;
-
-    try {
-      // YT Player örneği oluştur
-      playerRef.current = new window.YT.Player(iframeRef.current, {
-        videoId: videoId,
-        playerVars: {
-          autoplay: isPlaying ? 1 : 0,
-          mute: 1, // Otomatik oynatma için gerekli
-          controls: 1,
-          modestbranding: 1,
-          rel: 0,
-          playsinline: 1,
-          start: Math.floor(currentTime)
-        },
-        events: {
-          onReady: handleReady,
-          onStateChange: handleStateChange,
-          onError: handleError
-        }
-      });
-
-      console.log('YouTube Player başlatıldı');
-    } catch (error) {
-      console.error('Player başlatma hatası:', error);
-      setError('Video oynatıcı başlatılamadı. Lütfen sayfayı yenileyin.');
-    }
-  };
-
-  // Video değiştiğinde yeni bir player oluştur
-  useEffect(() => {
     setIsLoading(true);
     setError(null);
+    playerReadyRef.current = false;
 
-    if (videoId && window.YT && window.YT.Player) {
-      if (playerRef.current) {
-        try {
-          // Mevcut oynatıcıyı temizle
-          playerRef.current.destroy();
-        } catch (e) {
-          console.error('Player destroy hatası:', e);
+    // İframe içeriğini güncelle
+    const playerContainer = document.getElementById('player-container');
+    if (playerContainer) {
+      // İframe URL oluştur - mevcut player parametrelerini kullan
+      let embedUrl = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&autoplay=1&mute=1&modestbranding=1&rel=0&playsinline=1&start=${Math.floor(currentTime)}`;
+
+      // İframe elementini oluştur
+      playerContainer.innerHTML = `
+        <iframe
+          id="youtube-player"
+          src="${embedUrl}"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowfullscreen
+          class="w-full h-full border-0"
+        ></iframe>
+      `;
+
+      // İframe referansını al
+      iframeRef.current = document.getElementById('youtube-player') as HTMLIFrameElement;
+
+      // YouTube iframe API eventlerini dinle
+      window.addEventListener('message', handleYouTubeEvents);
+
+      // Basit bir kontrolcü oluştur
+      const simplePlayer: VideoPlayerInterface = {
+        playVideo: () => {
+          if (iframeRef.current) {
+            iframeRef.current.contentWindow?.postMessage('{"event":"command","func":"playVideo","args":""}', '*');
+          }
+        },
+        pauseVideo: () => {
+          if (iframeRef.current) {
+            iframeRef.current.contentWindow?.postMessage('{"event":"command","func":"pauseVideo","args":""}', '*');
+          }
+        },
+        seekTo: (seconds: number) => {
+          if (iframeRef.current) {
+            iframeRef.current.contentWindow?.postMessage(`{"event":"command","func":"seekTo","args":[${seconds}, true]}`, '*');
+          }
+        },
+        getCurrentTime: () => {
+          // İframe içinden gerçek zamanı alamayız, bu yüzden store değerini döndür
+          return currentTime;
+        },
+        getDuration: () => {
+          // Basit bir fixed değer dön (bu tam doğru olmayacak ama varsayılan olarak gerekli)
+          return 0;
         }
-      }
+      };
 
-      // Yeni bir iframe oluştur
-      const iframe = document.createElement('iframe');
-      iframe.id = 'youtube-player';
-      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
-      iframe.allowFullscreen = true;
+      // Player hazır olduğunda onReady'i çağır
+      setTimeout(() => {
+        setIsLoading(false);
+        playerReadyRef.current = true;
+        onReady(simplePlayer);
 
-      // İframe container'ı temizle ve yeni iframe ekle
-      const container = document.getElementById('player-container');
-      if (container) {
-        container.innerHTML = '';
-        container.appendChild(iframe);
-        iframeRef.current = iframe;
-
-        // Yeni player başlat
-        initializePlayer();
-      }
-    }
-  }, [videoId]);
-
-  // Hazır olduğunda
-  const handleReady = (event: any) => {
-    console.log('Player hazır');
-    setIsLoading(false);
-
-    if (onReady && event.target) {
-      onReady(event.target);
-      playerRef.current = event.target;
-
-      // Video süresini al ve paylaş
-      try {
-        const duration = event.target.getDuration();
-        if (duration && duration > 0 && window.updateVideoDuration) {
-          // @ts-ignore
-          window.updateVideoDuration(duration);
+        // İstemci bağlıysa ve video oynatılması gerekiyorsa oynat
+        if (isConnected && isPlaying) {
+          simplePlayer.playVideo();
         }
-      } catch (e) {
-        console.error('Video süresi alınamadı:', e);
-      }
+
+        console.log('Basit iframe player hazır');
+      }, 1500); // iFrame yüklenmesine zaman tanı
     }
 
-    // Bağlantı varsa ve oynatılmalıysa
-    if (isConnected && isPlaying) {
-      try {
-        event.target.playVideo();
-      } catch (e) {
-        console.error('Video oynatma hatası:', e);
-      }
-    }
-  };
+    // Temizleme işlemleri
+    return () => {
+      window.removeEventListener('message', handleYouTubeEvents);
+    };
+  }, [videoId, currentTime]);
 
-  // Durum değiştiğinde
-  const handleStateChange = (event: any) => {
-    // Video süresini güncelle
+  // YouTube iframe API mesajlarını işle
+  const handleYouTubeEvents = (event: MessageEvent) => {
+    // YouTube'dan gelen mesajları kontrol et
+    if (event.origin !== "https://www.youtube.com") return;
+
     try {
-      if (event.target) {
-        const currentTime = event.target.getCurrentTime();
-        const duration = event.target.getDuration();
+      const data = JSON.parse(event.data);
 
-        if (duration && duration > 0 && window.updateVideoDuration) {
-          // @ts-ignore
-          window.updateVideoDuration(duration);
+      // YouTube'un olay bilgilerini kontrol et
+      if (data.event === "onReady") {
+        setIsLoading(false);
+        console.log('YouTube iframe API: Player hazır');
+      }
+      else if (data.event === "onStateChange") {
+        // Durum değişikliklerini işle
+        const state = data.info;
+
+        // Durum değişikliği olayını bildir
+        onStateChange({ data: state });
+
+        // Uygun durum verisi süresini güncelle
+        if (data.info === 1) { // Playing
+          if (window.updateVideoDuration && data.duration) {
+            window.updateVideoDuration(data.duration);
+          }
         }
+      }
+      else if (data.event === "onError") {
+        const errorCode = data.info;
+        handleError(errorCode);
       }
     } catch (e) {
-      console.error('Video bilgileri alınamadı:', e);
-    }
-
-    if (onStateChange) {
-      onStateChange(event);
+      // JSON.parse hatası veya diğer hatalar
+      console.warn('YouTube postMessage işlenirken hata:', e);
     }
   };
 
   // Hata oluştuğunda
-  const handleError = (event: any) => {
+  const handleError = (errorCode: number) => {
     const errorCodes: Record<number, string> = {
       2: 'Geçersiz video ID',
       5: 'HTML5 player hatası',
@@ -195,7 +162,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       150: 'Video sahibi iframe\'de oynatmaya izin vermiyor'
     };
 
-    const errorCode = event.data;
     const errorMessage = errorCodes[errorCode] || `Bilinmeyen hata (${errorCode})`;
 
     console.error('YouTube Player hatası:', errorMessage, errorCode);
