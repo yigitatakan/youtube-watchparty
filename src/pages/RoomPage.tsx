@@ -25,6 +25,7 @@ const RoomPage: React.FC = () => {
   const {
     participants,
     currentVideoId,
+    isPlaying,
     setRoomId,
     setParticipants,
     addParticipant,
@@ -38,6 +39,10 @@ const RoomPage: React.FC = () => {
     setPlayerRef,
     loadVideo,
     handleStateChange,
+    playVideo,
+    pauseVideo,
+    seekTo,
+    synchronizeNow
   } = useVideoSync(roomId);
 
   // Set room ID in store
@@ -202,14 +207,6 @@ const RoomPage: React.FC = () => {
         </div>
       </header>
 
-      {/* Senkronizasyon uyarısı */}
-      <div className="bg-amber-600 text-white p-2 text-center text-sm">
-        <p>
-          <strong>Not:</strong> Video senkronizasyonu yalnızca aynı tarayıcıdaki sekmeler arasında çalışır.
-          Farklı tarayıcılar veya cihazlar arasında senkronizasyon gerçek bir sunucu gerektirir.
-        </p>
-      </div>
-
       {/* Mobile menu */}
       {isMobile && showMobileMenu && (
         <div className="bg-gray-800 border-b border-gray-700 p-3 slide-up">
@@ -241,7 +238,7 @@ const RoomPage: React.FC = () => {
       {/* Main content */}
       <div className="flex-1 flex flex-col md:flex-row">
         {/* Video section */}
-        <div className={`flex-1 flex flex-col ${isMobile ? 'h-auto' : 'h-screen'}`}>
+        <div className={`flex-1 flex flex-col ${isMobile ? 'h-[60vh]' : 'h-screen'}`}>
           <div className="relative flex-1 flex flex-col">
             <VideoPlayer
               videoId={currentVideoId}
@@ -249,7 +246,14 @@ const RoomPage: React.FC = () => {
               onStateChange={handleStateChange}
             />
 
-            <VideoControls roomId={roomId} />
+            <VideoControls
+              isReady={isReady}
+              onPlay={playVideo}
+              onPause={pauseVideo}
+              onSeek={seekTo}
+              onSync={synchronizeNow}
+              isPlaying={isPlaying}
+            />
 
             {!isMobile && (
               <div className="p-4 relative z-10">
@@ -257,10 +261,10 @@ const RoomPage: React.FC = () => {
                   onClick={() => setShowSearch(!showSearch)}
                   className="btn-secondary w-full"
                 >
-                  {showSearch ? 'Hide Search' : 'Search for a Video'}
+                  {showSearch ? 'Aramayı Gizle' : 'Video Ara'}
                 </button>
                 {showSearch && (
-                  <div className="mt-4 absolute left-0 right-0 px-4">
+                  <div className="mt-4 absolute left-0 right-0 px-4 z-20 bg-gray-900 rounded-lg shadow-lg">
                     <SearchVideo onVideoSelect={handleVideoSearch} />
                   </div>
                 )}
@@ -271,9 +275,9 @@ const RoomPage: React.FC = () => {
 
         {/* Sidebar */}
         {(!isMobile || showChat || showSearch) && (
-          <div className="w-full md:w-80 lg:w-96 border-t md:border-t-0 md:border-l border-gray-700 flex flex-col">
+          <div className="w-full md:w-80 lg:w-96 border-t md:border-t-0 md:border-l border-gray-700 flex flex-col max-h-screen md:max-h-none">
             {isMobile && showSearch && (
-              <div className="p-4">
+              <div className="p-4 bg-gray-800">
                 <SearchVideo onVideoSelect={handleVideoSearch} />
               </div>
             )}
@@ -284,6 +288,21 @@ const RoomPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Mobile video ara butonu */}
+      {isMobile && !showMobileMenu && !showChat && !showSearch && (
+        <div className="fixed bottom-4 right-4 z-20">
+          <button
+            onClick={() => {
+              setShowSearch(true);
+              setShowChat(false);
+            }}
+            className="p-3 bg-purple-600 rounded-full shadow-lg hover:bg-purple-700 transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-search"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          </button>
+        </div>
+      )}
 
       {/* Participants modal */}
       {showParticipants && (

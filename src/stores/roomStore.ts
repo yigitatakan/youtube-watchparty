@@ -3,7 +3,7 @@ import { create } from 'zustand';
 export interface Participant {
   userId: string;
   displayName: string;
-  isHost: boolean;
+  isHost?: boolean;
 }
 
 interface RoomState {
@@ -12,24 +12,14 @@ interface RoomState {
   currentVideoId: string | null;
   isPlaying: boolean;
   currentTime: number;
-  messages: ChatMessage[];
-  setRoomId: (id: string | null) => void;
+  setRoomId: (id: string) => void;
   setParticipants: (participants: Participant[]) => void;
   addParticipant: (participant: Participant) => void;
   removeParticipant: (userId: string) => void;
-  setCurrentVideoId: (videoId: string | null) => void;
+  setCurrentVideoId: (id: string) => void;
   setIsPlaying: (isPlaying: boolean) => void;
   setCurrentTime: (time: number) => void;
-  addMessage: (message: ChatMessage) => void;
   clearRoom: () => void;
-}
-
-export interface ChatMessage {
-  id: string;
-  userId: string;
-  displayName: string;
-  text: string;
-  timestamp: number;
 }
 
 export const useRoomStore = create<RoomState>((set) => ({
@@ -38,31 +28,25 @@ export const useRoomStore = create<RoomState>((set) => ({
   currentVideoId: null,
   isPlaying: false,
   currentTime: 0,
-  messages: [],
   setRoomId: (id) => set({ roomId: id }),
   setParticipants: (participants) => set({ participants }),
   addParticipant: (participant) =>
     set((state) => ({
-      participants: [...state.participants, participant],
+      participants: state.participants.some(p => p.userId === participant.userId)
+        ? state.participants
+        : [...state.participants, participant]
     })),
   removeParticipant: (userId) =>
     set((state) => ({
       participants: state.participants.filter((p) => p.userId !== userId),
     })),
-  setCurrentVideoId: (videoId) => set({ currentVideoId: videoId }),
+  setCurrentVideoId: (id) => set({ currentVideoId: id }),
   setIsPlaying: (isPlaying) => set({ isPlaying }),
   setCurrentTime: (time) => set({ currentTime: time }),
-  addMessage: (message) =>
-    set((state) => ({
-      messages: [...state.messages, message],
-    })),
-  clearRoom: () =>
-    set({
-      roomId: null,
-      participants: [],
-      currentVideoId: null,
-      isPlaying: false,
-      currentTime: 0,
-      messages: [],
-    }),
+  clearRoom: () => set({
+    participants: [],
+    currentVideoId: null,
+    isPlaying: false,
+    currentTime: 0
+  }),
 }));

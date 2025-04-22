@@ -17,6 +17,7 @@ declare global {
       };
     };
     onYouTubeIframeAPIReady?: () => void;
+    updateVideoDuration?: (duration: number) => void;
   }
 }
 
@@ -139,6 +140,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (onReady && event.target) {
       onReady(event.target);
       playerRef.current = event.target;
+
+      // Video süresini al ve paylaş
+      try {
+        const duration = event.target.getDuration();
+        if (duration && duration > 0 && window.updateVideoDuration) {
+          // @ts-ignore
+          window.updateVideoDuration(duration);
+        }
+      } catch (e) {
+        console.error('Video süresi alınamadı:', e);
+      }
     }
 
     // Bağlantı varsa ve oynatılmalıysa
@@ -153,6 +165,21 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Durum değiştiğinde
   const handleStateChange = (event: any) => {
+    // Video süresini güncelle
+    try {
+      if (event.target) {
+        const currentTime = event.target.getCurrentTime();
+        const duration = event.target.getDuration();
+
+        if (duration && duration > 0 && window.updateVideoDuration) {
+          // @ts-ignore
+          window.updateVideoDuration(duration);
+        }
+      }
+    } catch (e) {
+      console.error('Video bilgileri alınamadı:', e);
+    }
+
     if (onStateChange) {
       onStateChange(event);
     }
