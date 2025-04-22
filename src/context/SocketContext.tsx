@@ -207,7 +207,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
   const [usingMockSocket, setUsingMockSocket] = useState(false);
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 3; // 5'ten 3'e düşürdüm, daha hızlı yedek mod geçişi için
-  const forceMockSocket = true; // TEST: Her zaman BroadcastChannel kullan
+  const forceMockSocket = false; // TEST: Her zaman BroadcastChannel kullan
 
   useEffect(() => {
     if (!userId || !displayName) return;

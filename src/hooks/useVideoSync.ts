@@ -43,6 +43,11 @@ export const useVideoSync = (roomId: string) => {
   const syncPending = useRef(false);
   const lastKnownDuration = useRef(0);
   const debugMode = useRef(import.meta.env.VITE_DEBUG_MODE === 'true' || true);
+  const timeBeforeBlur = useRef<number>(0); // Sekme kapatıldığındaki zaman
+  const wasPlayingBeforeBlur = useRef<boolean>(false); // Sekme kapatılmadan önce oynatılıyor muydu
+  const blurHandled = useRef<boolean>(false); // Sekme değişikliği işlendi mi
+  const forceResumeOnFocus = useRef<boolean>(false); // Sekmeye dönüldüğünde zorla devam ettir
+  const lastVisibilityChange = useRef<number>(Date.now()); // Son sekme değişikliği zamanı
   
   const {
     currentVideoId,
@@ -59,6 +64,149 @@ export const useVideoSync = (roomId: string) => {
       console.log(`[VideoSync]`, ...args);
     }
   }, []);
+
+  // Window focus/blur olaylarını dinle - sekme değiştirildiğinde video süresini koru
+  useEffect(() => {
+    if (!isReady) return;
+
+    const handleVisibilityChange = () => {
+      const now = Date.now();
+      const timeSinceLastChange = now - lastVisibilityChange.current;
+      lastVisibilityChange.current = now;
+      
+      // Çok hızlı değişiklikleri engelle (bazen olay tekrar edebilir)
+      if (timeSinceLastChange < 100) {
+        logDebug('Çok hızlı sekme değişikliği - işlem atlanıyor');
+        return;
+      }
+      
+      if (document.hidden) {
+        // Sayfa arka plana gitti, mevcut durumu kaydet
+        try {
+          // Player durumunu kontrol et ve mevcut zamanı al
+          let currentPlayerTime = currentTime;
+          let currentPlayingState = isPlaying;
+          
+          if (playerRef.current) {
+            try {
+              const playerTime = playerRef.current.getCurrentTime();
+              if (!isNaN(playerTime) && playerTime > 0) {
+                currentPlayerTime = playerTime;
+              }
+            } catch (e) {
+              console.warn('Video zamanı alınamadı, store değeri kullanılıyor:', e);
+            }
+          }
+          
+          // Durumu kaydet
+          timeBeforeBlur.current = currentPlayerTime;
+          wasPlayingBeforeBlur.current = currentPlayingState;
+          blurHandled.current = true;
+          
+          logDebug('Sayfa arka plana gitti, durum kaydedildi:', { 
+            time: timeBeforeBlur.current, 
+            isPlaying: wasPlayingBeforeBlur.current 
+          });
+          
+          // Sekmeyi kapatmadan önceki son bilinen hızı ve zamanı gönder
+          if (socket && isConnected && !syncPending.current && currentVideoId) {
+            socket.emit('video:sync', {
+              roomId,
+              time: currentPlayerTime,
+              isPlaying: currentPlayingState,
+              videoId: currentVideoId,
+              timestamp: now
+            });
+            logDebug('Sekme değişimi sırasında senkronizasyon bilgisi gönderildi');
+          }
+        } catch (e) {
+          console.error('Sekme değişikliğinde video süresi kaydedilemedi:', e);
+        }
+      } else {
+        // Sayfa tekrar aktif oldu, durumu geri yükle
+        if (blurHandled.current) {
+          try {
+            // Ne kadar süre geçtiğini hesapla
+            const timeElapsed = (now - lastVisibilityChange.current) / 1000; // saniye cinsinden
+            let targetTime = timeBeforeBlur.current;
+            
+            logDebug('Sayfa tekrar aktif oldu, durum geri yükleniyor:', { 
+              savedTime: timeBeforeBlur.current, 
+              isPlaying: wasPlayingBeforeBlur.current,
+              timeElapsed: timeElapsed
+            });
+            
+            // Eğer oynatılıyorsa ve çok uzun süre geçmediyse, geçen süreyi hesaba kat
+            if (wasPlayingBeforeBlur.current && timeElapsed < 60) {
+              targetTime = timeBeforeBlur.current + timeElapsed;
+              logDebug('Oynatma sürerken sekme değiştirildi, hedef zaman güncellendi:', targetTime);
+            }
+            
+            // Socket aracılığıyla güncel durumu al
+            if (socket && isConnected && currentVideoId) {
+              syncPending.current = true;
+              socket.emit('video:get_current', { roomId, timestamp: now });
+              logDebug('Sekme değişimi sonrası güncel video durumu isteniyor');
+              
+              // 1 saniye içinde yanıt gelmezse manuel olarak devam et
+              setTimeout(() => {
+                if (syncPending.current) {
+                  syncPending.current = false;
+                  forceResumeOnFocus.current = true;
+                  logDebug('Senkronizasyon yanıtı gecikti, video manuel olarak devam ettirilecek');
+                }
+              }, 1000);
+            } else {
+              forceResumeOnFocus.current = true;
+            }
+            
+            // Zaman bilgisini geri yükle
+            if (targetTime > 0 && playerRef.current && forceResumeOnFocus.current) {
+              seeking.current = true;
+              
+              // Oynatıcı hazır olduğundan emin ol ve video konumunu ayarla
+              setTimeout(() => {
+                if (playerRef.current) {
+                  logDebug('Video konumu geri yükleniyor:', targetTime);
+                  playerRef.current.seekTo(targetTime);
+                  
+                  // Oynatma durumunu geri yükle
+                  setTimeout(() => {
+                    seeking.current = false;
+                    if (playerRef.current) {
+                      if (wasPlayingBeforeBlur.current || isPlaying) {
+                        playerRef.current.playVideo();
+                        logDebug('Video oynatma geri yüklendi');
+                      } else {
+                        playerRef.current.pauseVideo();
+                        logDebug('Video duraklatma geri yüklendi');
+                      }
+                    }
+                    
+                    // Senkronizasyon durumunu temizle
+                    forceResumeOnFocus.current = false;
+                  }, 300);
+                }
+              }, 300);
+            }
+            
+            blurHandled.current = false;
+          } catch (e) {
+            console.error('Sekme değişikliğinde video durumu geri yüklenemedi:', e);
+            blurHandled.current = false;
+          }
+        }
+      }
+    };
+
+    // Sayfa görünürlük değişikliğini dinle
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Temizleme
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isReady, isPlaying, currentTime, currentVideoId, roomId, socket, isConnected, logDebug]);
 
   // Socket event dinleyicilerini kur
   useEffect(() => {
@@ -148,6 +296,13 @@ export const useVideoSync = (roomId: string) => {
     // Video senkronizasyon olayı
     const handleVideoSync = ({ time, isPlaying: newIsPlaying, videoId }: { time: number, isPlaying: boolean, videoId: string }) => {
       logDebug('Socket: video:sync olayı alındı:', { time, isPlaying: newIsPlaying, videoId });
+      
+      // Senkronizasyon beklemesi varsa kaldır
+      if (syncPending.current) {
+        syncPending.current = false;
+        forceResumeOnFocus.current = false;
+        logDebug('Bekleyen senkronizasyon işlemi tamamlandı');
+      }
       
       // Video değiştiyse
       if (videoId && videoId !== currentVideoId) {
