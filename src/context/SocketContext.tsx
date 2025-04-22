@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useUser } from './UserContext';
 
@@ -157,62 +157,119 @@ class MockSocketServer {
 export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const { userId, displayName } = useUser();
   const [usingMockSocket, setUsingMockSocket] = useState(false);
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 5;
 
   useEffect(() => {
     if (!userId || !displayName) return;
 
-    // Geliştirme ortamında ve API_URL localhost ise mock socket kullanabilirsiniz
-    // const useMockSocket = process.env.NODE_ENV === 'development' && API_URL.includes('localhost');
-    const useMockSocket = false; // Gerçek socketio sunucusu için false
+    // Bağlantı durumunu sıfırla
+    setConnectionError(null);
+    reconnectAttemptsRef.current = 0;
 
-    if (useMockSocket) {
-      // Mock socket kullan (yerel test için)
-      console.log('Mock socket kullanılıyor');
-      setUsingMockSocket(true);
+    // Gerçek socket.io kullan
+    console.log('Gerçek socket.io sunucusuna bağlanılıyor:', API_URL);
+    const socketIo = io(API_URL, {
+      autoConnect: true,
+      reconnection: true,
+      reconnectionAttempts: maxReconnectAttempts,
+      reconnectionDelay: 1000,
+      timeout: 10000,
+      query: {
+        userId,
+        displayName
+      },
+      transports: ['websocket', 'polling'] // WebSocket'i öncelikli yap, olmadığında polling'e düş
+    });
 
-      // Burada önceki MockSocketServer kodunuz olacaktı
-      // ...
-    } else {
-      // Gerçek socket.io kullan
-      console.log('Gerçek socket.io sunucusuna bağlanılıyor:', API_URL);
-      const socketIo = io(API_URL, {
-        autoConnect: true,
-        reconnection: true,
-        query: {
-          userId,
-          displayName
-        }
-      });
+    socketIo.on('connect', () => {
+      console.log('Socket bağlandı, Socket ID:', socketIo.id);
+      setIsConnected(true);
+      setConnectionError(null);
+      reconnectAttemptsRef.current = 0;
+    });
 
-      socketIo.on('connect', () => {
-        console.log('Socket bağlandı');
-        setIsConnected(true);
-      });
+    socketIo.on('disconnect', (reason) => {
+      console.log('Socket bağlantısı kesildi, Neden:', reason);
+      setIsConnected(false);
+    });
 
-      socketIo.on('disconnect', () => {
-        console.log('Socket bağlantısı kesildi');
-        setIsConnected(false);
-      });
+    socketIo.on('connect_error', (error) => {
+      reconnectAttemptsRef.current += 1;
+      console.error('Socket bağlantı hatası:', error.message);
+      setConnectionError(`Sunucuya bağlanılamadı: ${error.message}`);
 
-      socketIo.on('connect_error', (error) => {
-        console.error('Socket bağlantı hatası:', error);
-      });
-
-      setSocket(socketIo);
-
-      return () => {
+      if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+        console.error('Maksimum yeniden bağlanma denemesi aşıldı, MockSocket kullanılacak');
         socketIo.disconnect();
-      };
-    }
+        // Otomatik olarak MockSocket kullanmaya geç
+        setupMockSocket(userId, displayName, setSocket, setIsConnected, setUsingMockSocket);
+      }
+    });
+
+    socketIo.io.on('reconnect', (attempt) => {
+      console.log(`Socket ${attempt}. denemede yeniden bağlandı`);
+    });
+
+    socketIo.io.on('reconnect_attempt', (attempt) => {
+      console.log(`Socket yeniden bağlanmayı deniyor, deneme: ${attempt}`);
+    });
+
+    socketIo.io.on('reconnect_error', (error) => {
+      console.error('Socket yeniden bağlanma hatası:', error);
+    });
+
+    socketIo.io.on('reconnect_failed', () => {
+      console.error('Socket yeniden bağlanma başarısız oldu');
+    });
+
+    setSocket(socketIo);
+
+    return () => {
+      console.log('Socket bağlantısı kapatılıyor');
+      socketIo.disconnect();
+    };
   }, [userId, displayName]);
+
+  // MockSocket kurulum fonksiyonu
+  const setupMockSocket = (userId: string, displayName: string, setSocket: any, setIsConnected: any, setUsingMockSocket: any) => {
+    console.log('Mock socket kullanılıyor - Backend bağlantısı kurulamadı');
+    setUsingMockSocket(true);
+
+    const mockSocketServer = new MockSocketServer(userId, displayName);
+    const mockSocket = mockSocketServer.getSocket();
+
+    mockSocket.on('connect', () => {
+      console.log('Mock Socket bağlandı');
+      setIsConnected(true);
+    });
+
+    mockSocket.on('disconnect', () => {
+      console.log('Mock Socket bağlantısı kesildi');
+      setIsConnected(false);
+    });
+
+    setSocket(mockSocket as any);
+
+    return () => {
+      mockSocket.disconnect();
+    };
+  };
 
   return (
     <SocketContext.Provider value={{ socket, isConnected }}>
-      {usingMockSocket && (
+      {connectionError && (
         <div className="bg-red-600 text-white p-2 text-center text-sm">
-          <p><strong>Uyarı:</strong> Mock socket kullanılıyor. Gerçek senkronizasyon için backend gereklidir.</p>
+          <p><strong>Bağlantı Hatası:</strong> {connectionError}</p>
+          <p className="text-xs">Tekrar bağlanılmaya çalışılıyor... ({reconnectAttemptsRef.current}/{maxReconnectAttempts})</p>
+        </div>
+      )}
+      {usingMockSocket && (
+        <div className="bg-yellow-600 text-white p-2 text-center text-sm">
+          <p><strong>Uyarı:</strong> Mock socket kullanılıyor. Sadece aynı tarayıcıdaki sekmeler arasında senkronizasyon çalışacak.</p>
         </div>
       )}
       {children}

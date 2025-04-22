@@ -1,23 +1,27 @@
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import RoomPage from './pages/RoomPage';
 import NotFoundPage from './pages/NotFoundPage';
 import { SocketProvider } from './context/SocketContext';
 import { UserProvider } from './context/UserContext';
+import DebugPage from './pages/DebugPage';
+
+import './App.css';
 
 function App() {
   return (
-    <Router>
-      <UserProvider>
-        <SocketProvider>
+    <UserProvider>
+      <SocketProvider>
+        <Router>
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/room/:roomId" element={<RoomPage />} />
+            <Route path="/debug" element={<DebugPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
-        </SocketProvider>
-      </UserProvider>
-    </Router>
+        </Router>
+      </SocketProvider>
+    </UserProvider>
   );
 }
 
